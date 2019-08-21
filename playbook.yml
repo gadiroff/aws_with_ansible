@@ -1,0 +1,8 @@
+---
+- name: Create user enviroment in AWS.
+  hosts: localhost
+  connection: local
+  gather_facts: no
+  check_mode: no
+  roles:
+          - role: roles/aws

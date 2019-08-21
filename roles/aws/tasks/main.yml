@@ -1,0 +1,155 @@
+---
+# tasks file for roles/aws
+
+### CREATE VPC.
+### ###########
+
+    - name: create VPC
+      ec2_vpc_net:
+       name: "{{ vpc_name }}"
+       cidr_block: "{{ vpc_cidr }}"
+       region: "{{ region }}"
+       state: present
+       aws_access_key: "{{ aws_access_key }}"
+       aws_secret_key: "{{ aws_secret_key }}"
+      register: vpc
+    
+### CREATE SUBNET AND ASSOCIATE WITH VPC.
+### #####################################
+      
+    - name: associate subnet to the VPC
+      ec2_vpc_subnet:
+        state: present
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        cidr: "{{ subnet_cidr }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        map_public: yes
+      register: subnet
+ 
+### CREATE IGW.
+### ###########
+
+    - name: create IGW
+      ec2_vpc_igw:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        state: "present"
+      register: igw
+
+### Routing traffic to IGW.
+### #######################
+
+    - name: Route IGW
+      ec2_vpc_route_table:
+        vpc_id: "{{ vpc.vpc.id }}"
+        region: "{{ region }}"
+        aws_access_key: "{{ aws_access_key }}"
+        aws_secret_key: "{{ aws_secret_key }}"
+        subnets:
+           - "{{ subnet.subnet.id }}"
+        routes:
+           - dest: 0.0.0.0/0
+             gateway_id: "{{ igw.gateway_id  }}"
+
+### CREATE SECURITY GROUP
+### ####################
+
+    - name: Create a security group.
+      ec2_group:
+          name: "{{ security_group_name }}"
+          description: an example01 ec2 group
+          vpc_id: "{{ vpc.vpc.id }}"
+          aws_access_key: "{{ aws_access_key }}"
+          region: "{{ region }}"
+          aws_secret_key: "{{ aws_secret_key }}"
+          rules:
+            - proto: tcp
+              from_port: 80
+              to_port: 80
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              from_port: 22
+              to_port: 22
+              cidr_ip: 0.0.0.0/0
+            - proto: tcp
+              from_port: 443
+              to_port: 443
+              cidr_ip: 0.0.0.0/0
+          rules_egress:
+            - proto: all
+              cidr_ip: 0.0.0.0/0
+      register: security_group       
+
+### CREATE KEY PAIR
+### ###############
+
+    - name: Create new key pair for ec2 instances
+      ec2_key:
+         name: "{{ key_name }}"
+         aws_access_key: "{{ aws_access_key }}"
+         aws_secret_key: "{{ aws_secret_key }}"
+         region: "{{ region }}"
+      register: keypair
+
+### CREATE EC2 INSTANCE
+### ##################
+
+    - name: Create instance for test01.
+      ec2:
+         key_name: "{{ key_name }}"
+         instance_type: "{{ instance_type }}"
+         image: "{{ image_id }}"
+         aws_access_key: "{{ aws_access_key }}"
+         aws_secret_key: "{{ aws_secret_key }}"
+         wait: yes
+         count: 1
+         assign_public_ip: yes
+         region: "{{ region }}"
+         vpc_subnet_id: "{{ subnet.subnet.id }}"            #  "{{ vpc_subnet_id }}"
+         group_id: "{{ security_group.group_id }}"
+      register: ec2
+
+### Associate new elastic IP.
+### ########################
+
+    - name: associate new elastic IPs with new instances.
+      ec2_eip:
+         device_id: "{{ item }}"
+         aws_access_key: "{{ aws_access_key }}"
+         aws_secret_key: "{{ aws_secret_key }}"
+         region: "{{ region }}"
+      with_items: "{{ ec2.instance_ids }}"
+
+### CREATE USER GROUP
+### ################
+
+    - name: Create  Groups.
+      iam_group:
+          name: 'prod'
+          managed_policy:
+              - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+              - arn:aws:iam::aws:policy/AmazonS3FullAccess
+          state: present
+          aws_access_key: "{{ aws_access_key }}"
+          aws_secret_key: "{{ aws_secret_key }}"
+
+### CREATE USER
+### ###########
+
+    - name: Create two new IAM users with API keys
+      iam:
+         iam_type: user
+         name: "{{ item }}"
+         aws_access_key: "{{ aws_access_key }}"
+         aws_secret_key: "{{ aws_secret_key }}"
+         state: present
+         groups: "{{ aws_groups }}"
+         password: "{{ user_password }}"
+         access_key_state: create
+      loop:
+         - "{{ aws_users}}"
+
